@@ -127,7 +127,7 @@ const VERSION=2;
 // Paste the Web app configuration from Firebase Console → Project settings.
 // The apiKey is a public project identifier; database security is enforced by firebase-rules.json.
 const FIREBASE_CONFIG = {
-   apiKey: "AIzaSyB5kUbW06bjXZiM-6cpVrYcaskCjedy8ak",
+  apiKey: "AIzaSyB5kUbW06bjXZiM-6cpVrYcaskCjedy8ak",
   authDomain: "loveletter-d7deb.firebaseapp.com",
   databaseURL: "https://loveletter-d7deb-default-rtdb.asia-southeast1.firebasedatabase.app/",
   projectId: "loveletter-d7deb",
@@ -155,6 +155,19 @@ const winTarget = n => n<=2?6:n===3?5:n===4?4:3;
 let auth=null, db=null, fbUser=null, roomRef=null, isHost=false, myPlayerId='', room='', pendingAction=null, commandListener=null, viewListener=null, mailListener=null;
 let state={version:VERSION,phase:'lobby',round:0,players:[],turnIndex:0,deck:[],setAside:null,discards:[],logs:[],winner:null};
 let view={players:[],phase:'lobby',round:0,turnIndex:0,deckCount:0,discards:[],logs:[],winner:null,myHand:[],myId:'',target:0};
+
+// Realtime Database does not store empty arrays. Restore all omitted collections
+// before game code reads them, and also tolerate Firebase returning sparse arrays
+// as keyed objects.
+function asArray(value){return Array.isArray(value)?value.filter(v=>v!=null):value&&typeof value==='object'?Object.values(value):[]}
+function normalizeState(raw){
+ const s=raw&&typeof raw==='object'?raw:{};
+ s.version=Number(s.version)||VERSION;s.phase=s.phase||'lobby';s.round=Number(s.round)||0;s.turnIndex=Number(s.turnIndex)||0;
+ s.deck=asArray(s.deck);s.discards=asArray(s.discards);s.logs=asArray(s.logs);s.setAside=s.setAside||null;s.winner=s.winner||null;
+ s.players=asArray(s.players).map(p=>({...p,seals:Number(p?.seals)||0,out:Boolean(p?.out),protected:Boolean(p?.protected),roundMoth:Boolean(p?.roundMoth),hand:asArray(p?.hand),pending:p?.pending||null}));
+ if(s.players.length)s.turnIndex=Math.min(Math.max(0,s.turnIndex),s.players.length-1);else s.turnIndex=0;
+ return s;
+}
 
 function setNet(ok,text){$('#netDot').classList.toggle('on',ok);$('#netText').textContent=text;}
 function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1900)}
@@ -246,12 +259,12 @@ function resolveGuess(pid,targetId,value){const actor=state.players.find(p=>p.id
 function resolveArchive(pid,keepId){const p=state.players.find(x=>x.id===pid);if(currentPlayer()?.id!==pid||!p||p.pending?.action!=='archive'||p.hand.length<2)return;const kept=p.hand.find(c=>c.id===keepId);if(!kept)return;const rest=p.hand.filter(c=>c.id!==keepId);p.hand=[kept];state.deck.unshift(...rest);log(`<b>${esc(p.name)}</b> consults the archive.`);nextTurn();}
 function requestFor(p){if(!p?.pending)return null;const q=p.pending;if(q.action==='archive')return{action:'archive',cards:p.hand};if(q.action==='guess'){const t=state.players.find(x=>x.id===q.targetId);return t?{action:'guess',target:{id:t.id,name:t.name}}:null}if(q.action==='target')return{action:'target',card:q.card,targets:q.targetIds.map(id=>state.players.find(x=>x.id===id)).filter(Boolean).map(t=>({id:t.id,name:t.name}))};return null}
 function publicStateFor(pid){const mine=state.players.find(p=>p.id===pid);return{version:VERSION,phase:state.phase,round:state.round,turnIndex:state.turnIndex,deckCount:state.deck.length,discards:state.discards,logs:state.logs,winner:state.winner,target:winTarget(state.players.length),players:state.players.map(p=>({id:p.id,name:p.name,seals:p.seals,out:p.out,protected:p.protected,handCount:p.hand.length})),myId:pid,myHand:mine?.hand||[],myRequest:requestFor(mine)};}
-async function broadcast(){if(!isHost||!roomRef)return;view=publicStateFor(myPlayerId);render();const updates={hostState:state};for(const p of state.players)updates['views/'+p.id]=publicStateFor(p.id);try{await roomRef.update(updates)}catch(e){fbError(e)}}
+async function broadcast(){if(!isHost||!roomRef)return;state=normalizeState(state);view=publicStateFor(myPlayerId);render();const updates={hostState:state};for(const p of state.players)updates['views/'+p.id]=publicStateFor(p.id);try{await roomRef.update(updates)}catch(e){fbError(e)}}
 function sendTo(pid,msg){if(pid===myPlayerId){handleMessage(msg);return}if(isHost&&roomRef)roomRef.child('mail/'+pid).push({...msg,createdAt:firebase.database.ServerValue.TIMESTAMP}).catch(fbError)}
 function hostReceive(pid,msg){if(!msg||typeof msg!=='object')return;if(msg.type==='play')playCard(pid,msg.cardId);else if(msg.type==='target')resolveTarget(pid,msg.targetId);else if(msg.type==='guess')resolveGuess(pid,msg.targetId,Number(msg.value));else if(msg.type==='archive')resolveArchive(pid,msg.keepId)}
 function handleMessage(msg){ if(msg.type==='state'){view=msg.state;render()} else if(msg.type==='request'){pendingAction=msg;renderAction(msg)} else if(msg.type==='privateReveal'){openInfo('Secret learned',msg.text)} else if(msg.type==='error'){toast(msg.text)} }
 function attachHostCommands(){
- commandListener=async snap=>{const msg=snap.val();try{
+ commandListener=async snap=>{const msg=snap.val();try{state=normalizeState(state);
    if(!msg?.senderUid)return;
    if(msg.type==='hello'){
      const existing=state.players.find(p=>p.id===msg.senderUid);
@@ -285,7 +298,7 @@ async function hostRoom(){
  }catch(e){fbError(e)}
 }
 async function resumeHost(name){
- isHost=true;const snap=await roomRef.child('hostState').once('value');if(!snap.exists())throw new Error('This host room has no recoverable game state.');state=snap.val();
+ isHost=true;const snap=await roomRef.child('hostState').once('value');if(!snap.exists())throw new Error('This host room has no recoverable game state.');state=normalizeState(snap.val());
  const me=state.players.find(p=>p.id===myPlayerId);if(me&&name)me.name=name;await attachPresence();attachHostCommands();setNet(true,'host resumed');showGame();await broadcast();toast('Host session restored.');
 }
 async function joinRoom(){
