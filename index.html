@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Whisper Court — Online Deduction Card Game</title>
+  <meta name="description" content="A lightweight online multiplayer deduction card game for 2–6 players." />
+  <style>
+    :root{
+      --bg:#0b0c12; --panel:#141722; --panel2:#1b2030; --ink:#f4ecd9; --muted:#9ca3b3;
+      --accent:#d8b46b; --accent2:#7fc8b7; --danger:#e36d6d; --good:#78c78a; --line:#34394a;
+      --shadow:0 18px 60px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(circle at 15% 10%,rgba(216,180,107,.08),transparent 30%),
+      radial-gradient(circle at 85% 30%,rgba(127,200,183,.06),transparent 30%),var(--bg);color:var(--ink);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{min-height:100vh;padding:22px}
+    button,input{font:inherit}
+    button{border:1px solid var(--line);background:#222738;color:var(--ink);border-radius:12px;padding:10px 14px;cursor:pointer;transition:.15s transform,.15s background,.15s border-color}
+    button:hover:not(:disabled){transform:translateY(-1px);border-color:#5d6479;background:#2a3044}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    button.primary{background:var(--accent);color:#17130d;border-color:transparent;font-weight:800}
+    button.good{background:var(--good);color:#0d1710;border-color:transparent;font-weight:800}
+    button.danger{background:#512c31;border-color:#744047}
+    input{width:100%;border:1px solid var(--line);background:#0f121b;color:var(--ink);padding:12px 13px;border-radius:12px;outline:none}
+    input:focus{border-color:var(--accent)}
+    .app{max-width:1220px;margin:auto}
+    .topbar{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .sigil{width:44px;height:44px;border-radius:50%;border:1px solid #796b49;display:grid;place-items:center;background:linear-gradient(145deg,#221c12,#11141c);box-shadow:inset 0 0 25px rgba(216,180,107,.08)}
+    .brand h1{font-size:19px;margin:0;letter-spacing:.05em}.brand p{margin:3px 0 0;color:var(--muted);font-size:12px}
+    .status{color:var(--muted);font-size:13px;text-align:right}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#666;margin-right:6px}.dot.on{background:var(--good)}
+    .screen{display:none}.screen.active{display:block}
+    .hero{max-width:760px;margin:9vh auto 0;text-align:center}.hero h2{font-size:clamp(38px,8vw,82px);line-height:.92;margin:0 0 14px;font-family:Georgia,serif;font-weight:500;letter-spacing:-.045em}.hero .lead{color:#b9bdc8;line-height:1.7;max-width:620px;margin:0 auto 26px}
+    .lobbyCard{max-width:720px;margin:0 auto;background:rgba(20,23,34,.86);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}
+    .joinGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.joinGrid .wide{grid-column:1/-1}.small{font-size:12px;color:var(--muted);line-height:1.5}.divider{height:1px;background:var(--line);margin:17px 0}
+    .layout{display:grid;grid-template-columns:1fr 310px;gap:16px}.board,.sidebar{background:rgba(20,23,34,.88);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}.board{padding:18px;min-height:680px}.sidebar{padding:15px}
+    .roomline{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.roomcode{font-family:ui-monospace,monospace;letter-spacing:.12em;color:var(--accent);font-size:20px}.roundBadge{font-size:12px;padding:6px 9px;background:#212638;border-radius:999px;color:#cbd0da}
+    .players{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}.player{position:relative;border:1px solid var(--line);background:#11151f;border-radius:16px;padding:12px;min-height:92px}.player.turn{outline:2px solid var(--accent);box-shadow:0 0 0 5px rgba(216,180,107,.08)}.player.out{opacity:.48;filter:grayscale(.6)}.player.protected:after{content:"WARD";position:absolute;top:8px;right:8px;font-size:9px;letter-spacing:.12em;color:var(--accent2);border:1px solid #335d55;padding:3px 5px;border-radius:99px}.pname{font-weight:800}.pmeta{font-size:11px;color:var(--muted);margin-top:5px}.tokens{color:var(--accent);font-size:12px;margin-top:9px}
+    .table{border:1px solid var(--line);background:radial-gradient(circle at 50% 45%,#202538,#11141d 65%);border-radius:22px;min-height:278px;padding:20px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;position:relative;overflow:hidden}.table:before{content:"";position:absolute;inset:18px;border:1px solid rgba(216,180,107,.09);border-radius:50%}.deck{position:relative;width:84px;height:116px;border:1px solid #756746;border-radius:10px;background:repeating-linear-gradient(45deg,#1e1a13 0 5px,#2b2519 5px 10px);box-shadow:8px 8px 0 #0e1017,9px 9px 0 #474032;margin-bottom:14px}.deck span{position:absolute;inset:0;display:grid;place-items:center;font-family:Georgia,serif;color:var(--accent);font-size:22px}.tableMsg{z-index:1}.tableMsg strong{display:block;font-family:Georgia,serif;font-size:22px;font-weight:500}.tableMsg span{display:block;color:var(--muted);font-size:12px;margin-top:5px}
+    .handTitle{display:flex;justify-content:space-between;align-items:center;margin:18px 2px 8px}.handTitle h3{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:#b7bdca}.cards{display:flex;flex-wrap:wrap;gap:10px}.card{width:180px;min-height:245px;border:1px solid #665d48;border-radius:16px;padding:14px;background:linear-gradient(155deg,#f0e6cd,#d8c7a2);color:#191816;box-shadow:0 12px 25px rgba(0,0,0,.26);position:relative;display:flex;flex-direction:column;transition:.15s transform,.15s box-shadow}.card.playable{cursor:pointer}.card.playable:hover{transform:translateY(-5px) rotate(-.4deg);box-shadow:0 17px 32px rgba(0,0,0,.34)}.card .value{font-family:Georgia,serif;font-size:36px}.card .role{font-size:19px;font-weight:900;margin-top:2px}.card .flavor{font-family:Georgia,serif;font-size:12px;font-style:italic;color:#625849;margin:7px 0 12px}.card .ability{font-size:12px;line-height:1.45;margin-top:auto;border-top:1px solid rgba(0,0,0,.18);padding-top:10px}.card .copies{position:absolute;right:11px;top:11px;font-size:10px;color:#756c5c}.card.red{background:linear-gradient(155deg,#f0d3cf,#cea7a4)}.card.blue{background:linear-gradient(155deg,#d6e5ea,#aebfc7)}.card.green{background:linear-gradient(155deg,#d9e7d8,#b7c8ad)}.card.gold{background:linear-gradient(155deg,#f5e5b8,#cdb06c)}
+    .sectionTitle{font-size:11px;text-transform:uppercase;letter-spacing:.13em;color:#8f96a6;margin:3px 0 10px}.log{height:275px;overflow:auto;border:1px solid var(--line);background:#0e1119;border-radius:13px;padding:9px}.logItem{font-size:11px;line-height:1.45;padding:7px 4px;border-bottom:1px solid #232736;color:#bac0cd}.logItem:last-child{border-bottom:none}.logItem b{color:var(--ink)}
+    .discardPile{display:flex;gap:4px;flex-wrap:wrap;min-height:65px;margin-bottom:12px}.mini{width:42px;height:58px;border-radius:6px;background:#d9cfba;color:#1d1a15;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;font-weight:800;border:1px solid #6c604d;position:relative}.mini span{position:absolute;bottom:3px;font-size:7px;font-family:system-ui;max-width:38px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.rules{font-size:12px;color:#aeb4c0;line-height:1.55}.rules details{border-top:1px solid var(--line);padding:9px 0}.rules summary{cursor:pointer;color:#d9dde5;font-weight:700}.rulecard{display:grid;grid-template-columns:25px 1fr;gap:7px;margin:7px 0}.rulecard b{color:var(--accent)}
+    .actionbar{margin-top:12px;padding:13px;border:1px solid var(--line);border-radius:15px;background:#11151f}.actionbar strong{font-size:13px}.choiceGrid{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.choiceGrid button{font-size:12px;padding:8px 10px}.notice{padding:10px 12px;border:1px solid #4b4433;background:#211e17;border-radius:12px;font-size:12px;color:#ded2b5;margin-top:10px}.modal{position:fixed;inset:0;background:rgba(4,5,8,.78);display:none;align-items:center;justify-content:center;padding:20px;z-index:20}.modal.open{display:flex}.modalBox{width:min(560px,100%);background:#171b27;border:1px solid var(--line);border-radius:20px;padding:18px;box-shadow:var(--shadow)}.modalBox h3{margin:0 0 6px;font-family:Georgia,serif;font-size:24px}.modalBox p{color:#adb4c2;font-size:13px;line-height:1.55}.modalActions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;background:#f0e6cd;color:#181612;padding:10px 14px;border-radius:12px;font-size:12px;font-weight:700;transition:.25s;z-index:30;pointer-events:none}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .footerNote{font-size:10px;color:#686f7e;text-align:center;margin-top:13px}.hidden{display:none!important}
+    @media(max-width:850px){body{padding:10px}.layout{grid-template-columns:1fr}.board{min-height:0}.joinGrid{grid-template-columns:1fr}.card{width:calc(50% - 5px);min-width:145px}.hero{margin-top:4vh}.sidebar{order:2}}
+    @media(max-width:500px){.card{width:100%;min-height:210px}.topbar{align-items:flex-start}.brand p{display:none}.players{grid-template-columns:1fr 1fr}.player{min-height:82px}.roomline{flex-direction:column}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><div class="sigil">✦</div><div><h1>WHISPER COURT</h1><p>online deduction for 2–6 players</p></div></div>
+    <div class="status"><span id="netDot" class="dot"></span><span id="netText">offline</span></div>
+  </header>
+
+  <section id="homeScreen" class="screen active">
+    <div class="hero">
+      <h2>Secrets travel faster than crowns.</h2>
+      <p class="lead">A tiny online deduction game. Keep one card, draw one card, play one card. Read the table, mislead your rivals, and be the last courtier standing.</p>
+    </div>
+    <div class="lobbyCard">
+      <div class="joinGrid">
+        <div class="wide"><label class="small">YOUR NAME</label><input id="nameInput" maxlength="18" placeholder="Player name" /></div>
+        <button id="hostBtn" class="primary">Create room</button>
+        <button id="joinRevealBtn">Join a room</button>
+        <div id="joinFields" class="wide hidden">
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px"><input id="roomInput" maxlength="10" placeholder="Room code" /><button id="joinBtn" class="good">Join</button></div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <p class="small">This page uses WebRTC peer-to-peer networking. The room host acts as the game server, so the game ends if the host closes the tab. For public/high-traffic hosting, use your own signalling/TURN infrastructure.</p>
+    </div>
+    <div class="footerNote">Original game implementation inspired by compact social-deduction card games. No assets required.</div>
+  </section>
+
+  <section id="gameScreen" class="screen">
+    <div class="layout">
+      <main class="board">
+        <div class="roomline">
+          <div><div class="small">ROOM</div><div id="roomCode" class="roomcode">—</div></div>
+          <div style="display:flex;gap:7px;align-items:center"><span id="roundBadge" class="roundBadge">Lobby</span><button id="copyBtn">Copy invite</button></div>
+        </div>
+        <div id="players" class="players"></div>
+        <div class="table">
+          <div id="deckVisual" class="deck"><span id="deckCount">0</span></div>
+          <div class="tableMsg"><strong id="tableHeadline">Gather the court.</strong><span id="tableSub">Waiting for players…</span></div>
+        </div>
+        <div id="actionArea"></div>
+        <div class="handTitle"><h3>Your hand</h3><span id="handHint" class="small"></span></div>
+        <div id="hand" class="cards"></div>
+      </main>
+
+      <aside class="sidebar">
+        <div class="sectionTitle">Host controls</div>
+        <div id="hostControls"><button id="startBtn" class="primary" style="width:100%">Start game</button></div>
+        <div class="divider"></div>
+        <div class="sectionTitle">Played cards</div><div id="discards" class="discardPile"></div>
+        <div class="sectionTitle">Court record</div><div id="log" class="log"></div>
+        <div class="divider"></div>
+        <div class="rules">
+          <details open><summary>How to win</summary><p>On your turn, draw one and play one. Be the final surviving player, or hold the highest-value card when the deck empties. First to the required number of seals wins.</p></details>
+          <details><summary>Roles</summary><div id="roleRules"></div></details>
+          <details><summary>Networking</summary><p>The host owns the authoritative deck and hidden hands. Guests receive only public state plus their own hand.</p></details>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<div id="modal" class="modal"><div class="modalBox"><h3 id="modalTitle"></h3><p id="modalText"></p><div id="modalChoices" class="choiceGrid"></div><div class="modalActions"><button id="modalCancel">Cancel</button></div></div></div>
+<div id="toast" class="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const uid = () => Math.random().toString(36).slice(2,9);
+const shuffle = a => { a=[...a]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
+const ROOM_PREFIX='whisper-court-';
+const VERSION=1;
+const ROLES = [
+ {v:0,name:'Moth',count:2,cls:'green',flavor:'It remembers who survived.',text:'No immediate effect. If you are the only surviving player who played a Moth this round, gain 1 bonus seal.'},
+ {v:1,name:'Watcher',count:6,cls:'blue',flavor:'One guess can ruin a life.',text:'Choose another player and name a role other than Watcher. If correct, they are eliminated.'},
+ {v:2,name:'Whisperer',count:2,cls:'blue',flavor:'Knowledge rarely stays private.',text:'Privately view another player’s hand.'},
+ {v:3,name:'Duelist',count:2,cls:'red',flavor:'Confidence is a weapon.',text:'Choose another player. Compare hands privately; the lower value is eliminated.'},
+ {v:4,name:'Warden',count:2,cls:'green',flavor:'Not every door can be opened.',text:'You cannot be targeted by other effects until your next turn.'},
+ {v:5,name:'Envoy',count:2,cls:'blue',flavor:'A message can replace a destiny.',text:'Choose any player (including yourself). They discard their hand and draw a new card.'},
+ {v:6,name:'Archivist',count:2,cls:'green',flavor:'The archive always keeps something.',text:'Draw two extra cards, keep one, and place the other two beneath the deck.'},
+ {v:7,name:'Regent',count:1,cls:'gold',flavor:'Power changes hands quietly.',text:'Trade hands with another player.'},
+ {v:8,name:'Chancellor',count:1,cls:'gold',flavor:'Protocol outranks desire.',text:'If your other card is Regent or Sovereign, you must play Chancellor.'},
+ {v:9,name:'Sovereign',count:1,cls:'red',flavor:'The crown cannot survive exposure.',text:'If you play or discard this card for any reason, you are eliminated.'},
+];
+const byV = v => ROLES.find(r=>r.v===v);
+const fullDeck = () => ROLES.flatMap(r=>Array.from({length:r.count},()=>({id:uid(),v:r.v})));
+const winTarget = n => n<=2?6:n===3?5:n===4?4:3;
+
+let peer=null, hostConn=null, conns=new Map(), isHost=false, myPeerId='', myPlayerId=uid(), room='', pendingAction=null;
+let state={version:VERSION,phase:'lobby',round:0,players:[],turnIndex:0,deck:[],setAside:null,discards:[],logs:[],winner:null};
+let view={players:[],phase:'lobby',round:0,turnIndex:0,deckCount:0,discards:[],logs:[],winner:null,myHand:[],myId:myPlayerId,target:0};
+
+function setNet(ok,text){$('#netDot').classList.toggle('on',ok);$('#netText').textContent=text;}
+function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1900)}
+function showGame(){ $('#homeScreen').classList.remove('active'); $('#gameScreen').classList.add('active'); }
+function normRoom(s){return s.trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8)}
+function newRoomCode(){return Array.from({length:5},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('')}
+function cardHTML(c,playable=false){ const r=byV(c.v); return `<div class="card ${r.cls} ${playable?'playable':''}" data-card="${c.id}"><span class="copies">${r.count} in deck</span><div class="value">${r.v}</div><div class="role">${r.name}</div><div class="flavor">${r.flavor}</div><div class="ability">${r.text}</div></div>` }
+function log(text){state.logs.push({id:uid(),text}); if(state.logs.length>80)state.logs.shift();}
+function activePlayers(){return state.players.filter(p=>!p.out)}
+function currentPlayer(){return state.players[state.turnIndex]}
+function nextTurn(){
+ if(state.phase!=='playing')return;
+ let guard=0;
+ do{state.turnIndex=(state.turnIndex+1)%state.players.length;guard++;}while(state.players[state.turnIndex].out&&guard<20);
+ const p=currentPlayer(); p.protected=false;
+ if(state.deck.length===0){finishRoundByValue();return;}
+ p.hand.push(state.deck.pop());
+ log(`<b>${esc(p.name)}</b> begins a turn.`); broadcast();
+}
+function beginRound(){
+ state.round++; state.phase='playing'; state.winner=null; state.discards=[]; state.deck=shuffle(fullDeck()); state.setAside=state.deck.pop();
+ state.players.forEach(p=>{p.out=false;p.protected=false;p.roundMoth=false;p.hand=[state.deck.pop()]});
+ if(state.players.length===2){for(let i=0;i<3;i++){const c=state.deck.pop();state.discards.push({card:c,playerId:null,public:true,setup:true});}}
+ state.turnIndex=(state.round-1)%state.players.length;
+ currentPlayer().hand.push(state.deck.pop());
+ log(`<b>Round ${state.round}</b> begins. ${esc(currentPlayer().name)} acts first.`); broadcast();
+}
+function startGame(){ if(state.players.length<2)return toast('Need at least 2 players.'); state.players.forEach(p=>p.seals=0); state.round=0; log('<b>The match begins.</b>'); beginRound(); }
+function eliminate(p,reason){ if(p.out)return; p.out=true;p.protected=false; const hand=[...p.hand];p.hand=[]; hand.forEach(c=>{state.discards.push({card:c,playerId:p.id,public:true}); if(c.v===0)p.roundMoth=true;}); log(`<b>${esc(p.name)}</b> is eliminated${reason?' — '+esc(reason):''}.`); }
+function checkRoundEnd(){ const alive=activePlayers(); if(alive.length===1){finishRound(alive[0]);return true} return false }
+function finishRoundByValue(){ const alive=activePlayers(); let max=Math.max(...alive.map(p=>p.hand[0]?.v??-1)); let candidates=alive.filter(p=>(p.hand[0]?.v??-1)===max); if(candidates.length>1){ const discardSum=p=>state.discards.filter(d=>d.playerId===p.id).reduce((s,d)=>s+d.card.v,0); let maxD=Math.max(...candidates.map(discardSum)); candidates=candidates.filter(p=>discardSum(p)===maxD); } finishRound(candidates[Math.floor(Math.random()*candidates.length)]); }
+function finishRound(w){
+ state.phase='roundOver'; let gained=1; w.seals++;
+ const mothSurvivors=state.players.filter(p=>!p.out&&p.roundMoth);
+ if(mothSurvivors.length===1){mothSurvivors[0].seals++; if(mothSurvivors[0].id===w.id)gained++; log(`<b>${esc(mothSurvivors[0].name)}</b> earns a bonus seal from the Moth.`);}
+ state.winner={id:w.id,name:w.name,round:true}; log(`<b>${esc(w.name)}</b> wins the round${gained>1?' and gains '+gained+' seals':''}.`);
+ const champ=state.players.find(p=>p.seals>=winTarget(state.players.length)); if(champ){state.phase='gameOver';state.winner={id:champ.id,name:champ.name,round:false};log(`<b>${esc(champ.name)}</b> wins the match.`)}
+ broadcast();
+}
+function canTarget(p,allowSelf=false,actorId=null){ if(p.out)return false; if(!allowSelf&&p.id===actorId)return false; if(p.protected&&p.id!==actorId)return false; return true }
+function legalPlay(p,card){ const other=p.hand.find(c=>c.id!==card.id); if(!other)return true; if((other.v===7||other.v===9)&&card.v!==8 && p.hand.some(c=>c.v===8))return false; return true; }
+function playCard(pid,cardId){
+ if(state.phase!=='playing'||currentPlayer()?.id!==pid)return;
+ const p=state.players.find(x=>x.id===pid); if(!p||p.out||p.hand.length!==2)return;
+ const idx=p.hand.findIndex(c=>c.id===cardId); if(idx<0)return; const card=p.hand[idx]; if(!legalPlay(p,card))return sendTo(pid,{type:'error',text:'Protocol requires you to play Chancellor.'});
+ p.hand.splice(idx,1); state.discards.push({card,playerId:p.id,public:true}); if(card.v===0)p.roundMoth=true;
+ log(`<b>${esc(p.name)}</b> plays <b>${byV(card.v).name}</b>.`);
+ if(card.v===9){eliminate(p,'the Sovereign was exposed'); if(!checkRoundEnd())nextTurn(); return}
+ if(card.v===0||card.v===8){nextTurn();return}
+ if(card.v===4){p.protected=true;nextTurn();return}
+ if(card.v===6){
+   const drawn=[];for(let i=0;i<2&&state.deck.length;i++)drawn.push(state.deck.pop());p.hand.push(...drawn);
+   if(p.hand.length<=1){nextTurn();return} sendTo(pid,{type:'request',action:'archive',cards:p.hand}); broadcast();return;
+ }
+ const targets=state.players.filter(t=>canTarget(t,card.v===5,p.id));
+ if(card.v===5 && !targets.some(t=>t.id===p.id))targets.push(p);
+ if(!targets.length){log('No valid target.');nextTurn();return}
+ sendTo(pid,{type:'request',action:'target',card,targets:targets.map(t=>({id:t.id,name:t.name}))}); broadcast();
+}
+function resolveTarget(pid,card,targetId){
+ if(currentPlayer()?.id!==pid)return; const actor=state.players.find(p=>p.id===pid), target=state.players.find(p=>p.id===targetId); if(!actor||!target)return;
+ if(!canTarget(target,card.v===5,pid)){sendTo(pid,{type:'error',text:'That target is not available.'});return}
+ if(card.v===1){sendTo(pid,{type:'request',action:'guess',card,target:{id:target.id,name:target.name}});return}
+ if(card.v===2){sendTo(pid,{type:'privateReveal',text:`${target.name} holds ${target.hand[0]?byV(target.hand[0].v).name:'nothing'}.`});nextTurn();return}
+ if(card.v===3){ const av=actor.hand[0]?.v??-1,tv=target.hand[0]?.v??-1; if(av>tv)eliminate(target,'lost the duel');else if(tv>av)eliminate(actor,'lost the duel');else log('The duel is a tie.'); if(!checkRoundEnd())nextTurn();return}
+ if(card.v===5){ if(target.hand[0]){const old=target.hand.pop();state.discards.push({card:old,playerId:target.id,public:true});if(old.v===0)target.roundMoth=true;if(old.v===9){eliminate(target,'discarded the Sovereign'); if(!checkRoundEnd())nextTurn();return}} const repl=state.deck.length?state.deck.pop():state.setAside; if(repl)target.hand=[repl]; log(`<b>${esc(target.name)}</b> replaces their hand.`);nextTurn();return}
+ if(card.v===7){const a=actor.hand,b=target.hand;actor.hand=b;target.hand=a;log(`<b>${esc(actor.name)}</b> trades hands with <b>${esc(target.name)}</b>.`);nextTurn();return}
+}
+function resolveGuess(pid,targetId,value){ if(currentPlayer()?.id!==pid)return; const target=state.players.find(p=>p.id===targetId); if(!target)return; const name=byV(value).name;log(`<b>${esc(state.players.find(p=>p.id===pid).name)}</b> names <b>${name}</b> against <b>${esc(target.name)}</b>.`); if(target.hand[0]?.v===value)eliminate(target,'the Watcher guessed correctly'); if(!checkRoundEnd())nextTurn(); }
+function resolveArchive(pid,keepId){const p=state.players.find(x=>x.id===pid);if(currentPlayer()?.id!==pid||!p||p.hand.length<2)return; const kept=p.hand.find(c=>c.id===keepId);if(!kept)return;const rest=p.hand.filter(c=>c.id!==keepId);p.hand=[kept];state.deck.unshift(...rest);log(`<b>${esc(p.name)}</b> consults the archive.`);nextTurn();}
+function publicStateFor(pid){ return {version:VERSION,phase:state.phase,round:state.round,turnIndex:state.turnIndex,deckCount:state.deck.length,discards:state.discards,logs:state.logs,winner:state.winner,target:winTarget(state.players.length),players:state.players.map(p=>({id:p.id,name:p.name,seals:p.seals,out:p.out,protected:p.protected,handCount:p.hand.length})),myId:pid,myHand:state.players.find(p=>p.id===pid)?.hand||[]}; }
+function broadcast(){ if(!isHost)return; view=publicStateFor(myPlayerId);render(); for(const [pid,c] of conns) if(c.open)c.send({type:'state',state:publicStateFor(pid)}); }
+function sendTo(pid,msg){if(pid===myPlayerId){handleMessage(msg);return}const c=conns.get(pid);if(c?.open)c.send(msg)}
+function hostReceive(pid,msg){if(!msg||typeof msg!=='object')return;if(msg.type==='play')playCard(pid,msg.cardId);else if(msg.type==='target')resolveTarget(pid,msg.card,msg.targetId);else if(msg.type==='guess')resolveGuess(pid,msg.targetId,msg.value);else if(msg.type==='archive')resolveArchive(pid,msg.keepId)}
+function handleMessage(msg){ if(msg.type==='state'){view=msg.state;render()} else if(msg.type==='request'){pendingAction=msg;renderAction(msg)} else if(msg.type==='privateReveal'){openInfo('Secret learned',msg.text)} else if(msg.type==='error'){toast(msg.text)} }
+function hostRoom(){
+ const name=$('#nameInput').value.trim()||'Host'; room=newRoomCode(); isHost=true; myPlayerId=uid(); peer=new Peer(ROOM_PREFIX+room); setNet(false,'connecting…');
+ peer.on('open',id=>{myPeerId=id;setNet(true,'host online');state.players=[{id:myPlayerId,peerId:id,name,seals:0,out:false,protected:false,roundMoth:false,hand:[]}];view=publicStateFor(myPlayerId);showGame();render()});
+ peer.on('connection',conn=>{conn.on('data',msg=>{if(msg.type==='hello'){if(state.phase!=='lobby'){conn.send({type:'error',text:'Match already started.'});conn.close();return}if(state.players.length>=6){conn.send({type:'error',text:'Room is full.'});conn.close();return}const pid=uid();conn._pid=pid;conns.set(pid,conn);state.players.push({id:pid,peerId:conn.peer,name:String(msg.name||'Guest').slice(0,18),seals:0,out:false,protected:false,roundMoth:false,hand:[]});conn.send({type:'welcome',playerId:pid,room});log(`<b>${esc(msg.name||'Guest')}</b> joined the room.`);broadcast()}else if(conn._pid)hostReceive(conn._pid,msg)});conn.on('close',()=>{const pid=conn._pid;if(!pid)return;conns.delete(pid);const p=state.players.find(x=>x.id===pid);if(p){log(`<b>${esc(p.name)}</b> disconnected.`); if(state.phase==='lobby')state.players=state.players.filter(x=>x.id!==pid);else if(!p.out){eliminate(p,'disconnected');checkRoundEnd()} broadcast();}})});
+ peer.on('error',e=>{setNet(false,'network error');toast(e.type==='unavailable-id'?'Room code collision. Reload and try again.':'Network error: '+e.type)});
+}
+function joinRoom(){
+ const name=$('#nameInput').value.trim()||'Guest'; room=normRoom($('#roomInput').value);if(!room)return toast('Enter a room code.');isHost=false;peer=new Peer();setNet(false,'connecting…');
+ peer.on('open',id=>{myPeerId=id;hostConn=peer.connect(ROOM_PREFIX+room,{reliable:true});hostConn.on('open',()=>{setNet(true,'connected');hostConn.send({type:'hello',name});showGame();$('#roomCode').textContent=room});hostConn.on('data',msg=>{if(msg.type==='welcome'){myPlayerId=msg.playerId;view.myId=myPlayerId;toast('Joined '+msg.room)}else handleMessage(msg)});hostConn.on('close',()=>{setNet(false,'host disconnected');toast('Host disconnected.')});});peer.on('error',e=>{setNet(false,'network error');toast('Could not connect: '+e.type)});
+}
+function send(msg){if(isHost)hostReceive(myPlayerId,msg);else if(hostConn?.open)hostConn.send(msg)}
+function render(){
+ $('#roomCode').textContent=room||'—';$('#roundBadge').textContent=view.phase==='lobby'?'Lobby':`Round ${view.round}`;$('#startBtn').style.display=isHost?'block':'none';$('#startBtn').disabled=view.phase!=='lobby'||view.players.length<2;$('#startBtn').textContent=view.players.length<2?'Need 2 players':'Start game';
+ const cp=view.players[view.turnIndex];$('#players').innerHTML=view.players.map(p=>`<div class="player ${cp?.id===p.id?'turn':''} ${p.out?'out':''} ${p.protected?'protected':''}"><div class="pname">${esc(p.name)}${p.id===view.myId?' · you':''}</div><div class="pmeta">${p.out?'Eliminated':p.handCount+' card'+(p.handCount===1?'':'s')}</div><div class="tokens">${'◆'.repeat(p.seals)}${'◇'.repeat(Math.max(0,(view.target||0)-p.seals))}</div></div>`).join('');
+ $('#deckCount').textContent=view.deckCount; const me=view.players.find(p=>p.id===view.myId); const myTurn=view.phase==='playing'&&cp?.id===view.myId&&!me?.out; $('#handHint').textContent=myTurn?'Choose a card to play':' ';
+ $('#hand').innerHTML=(view.myHand||[]).map(c=>cardHTML(c,myTurn)).join('')||`<div class="small">${me?.out?'You are out of this round.':'No cards yet.'}</div>`;
+ document.querySelectorAll('.card.playable').forEach(el=>el.onclick=()=>send({type:'play',cardId:el.dataset.card}));
+ $('#discards').innerHTML=(view.discards||[]).map(d=>{const r=byV(d.card.v);return `<div class="mini" title="${r.name}">${r.v}<span>${r.name}</span></div>`}).join('');
+ $('#log').innerHTML=[...(view.logs||[])].reverse().map(x=>`<div class="logItem">${x.text}</div>`).join('');
+ if(view.phase==='lobby'){ $('#tableHeadline').textContent='Gather the court.';$('#tableSub').textContent=`${view.players.length}/6 players connected`; }
+ else if(view.phase==='playing'){ $('#tableHeadline').textContent=cp?.id===view.myId?'Your move.':`${cp?.name||'Someone'} is thinking…`;$('#tableSub').textContent=`${view.deckCount} cards remain · first to ${view.target} seals wins`; }
+ else if(view.phase==='roundOver'){ $('#tableHeadline').textContent=`${view.winner?.name||'Someone'} wins the round.`;$('#tableSub').textContent=isHost?'Start the next round when ready.':'Waiting for the host.'; }
+ else if(view.phase==='gameOver'){ $('#tableHeadline').textContent=`${view.winner?.name||'Someone'} wins the match.`;$('#tableSub').textContent='The court remembers everything.'; }
+ if(isHost && (view.phase==='roundOver'||view.phase==='gameOver')){$('#hostControls').innerHTML=`<button id="nextBtn" class="primary" style="width:100%">${view.phase==='gameOver'?'New match':'Next round'}</button>`;$('#nextBtn').onclick=()=>view.phase==='gameOver'?startGame():beginRound()} else if(isHost){$('#hostControls').innerHTML='<button id="startBtn" class="primary" style="width:100%">Start game</button>';$('#startBtn').disabled=view.phase!=='lobby'||view.players.length<2;$('#startBtn').onclick=startGame}
+ }
+function renderAction(req){
+ const box=$('#actionArea');if(!req){box.innerHTML='';return} if(req.action==='target'){const r=byV(req.card.v);box.innerHTML=`<div class="actionbar"><strong>${r.name}: choose a target</strong><div class="choiceGrid">${req.targets.map(t=>`<button data-target="${t.id}">${esc(t.name)}</button>`).join('')}</div></div>`;box.querySelectorAll('[data-target]').forEach(b=>b.onclick=()=>{send({type:'target',card:req.card,targetId:b.dataset.target});box.innerHTML='';pendingAction=null})}
+ else if(req.action==='guess'){box.innerHTML=`<div class="actionbar"><strong>Watcher: name ${esc(req.target.name)}’s card</strong><div class="choiceGrid">${ROLES.filter(r=>r.v!==1).map(r=>`<button data-guess="${r.v}">${r.v} · ${r.name}</button>`).join('')}</div></div>`;box.querySelectorAll('[data-guess]').forEach(b=>b.onclick=()=>{send({type:'guess',targetId:req.target.id,value:Number(b.dataset.guess)});box.innerHTML='';pendingAction=null})}
+ else if(req.action==='archive'){box.innerHTML=`<div class="actionbar"><strong>Archivist: keep one card</strong><div class="cards" style="margin-top:10px">${req.cards.map(c=>cardHTML(c,true)).join('')}</div></div>`;box.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>{send({type:'archive',keepId:b.dataset.card});box.innerHTML='';pendingAction=null})}
+}
+function openInfo(title,text){$('#modalTitle').textContent=title;$('#modalText').textContent=text;$('#modalChoices').innerHTML='';$('#modal').classList.add('open')}
+$('#modalCancel').onclick=()=>$('#modal').classList.remove('open');
+$('#hostBtn').onclick=hostRoom;$('#joinRevealBtn').onclick=()=>{$('#joinFields').classList.remove('hidden');$('#roomInput').focus()};$('#joinBtn').onclick=joinRoom;$('#roomInput').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});
+$('#copyBtn').onclick=async()=>{const link=location.origin+location.pathname+'?room='+encodeURIComponent(room);try{await navigator.clipboard.writeText(link);toast('Invite link copied.')}catch{toast('Room code: '+room)}};
+$('#roleRules').innerHTML=[...ROLES].reverse().map(r=>`<div class="rulecard"><b>${r.v}</b><div><strong>${r.name}</strong> — ${r.text}</div></div>`).join('');
+const params=new URLSearchParams(location.search);if(params.get('room')){$('#joinFields').classList.remove('hidden');$('#roomInput').value=normRoom(params.get('room'))}
+window.addEventListener('beforeunload',()=>{try{peer?.destroy()}catch{}});
+render();
+})();
+</script>
+</body>
+</html>
