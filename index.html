@@ -72,7 +72,7 @@
         </div>
       </div>
       <div class="divider"></div>
-      <p class="small">This page uses WebRTC peer-to-peer networking. The room host acts as the game server, so the game ends if the host closes the tab. For public/high-traffic hosting, use your own signalling/TURN infrastructure.</p>
+      <p class="small">Rooms use Firebase Realtime Database, so friends can connect reliably across different Wi-Fi networks, mobile data, schools, and countries. Anonymous sign-in keeps every player’s private hand isolated.</p>
     </div>
     <div class="footerNote">Original game implementation inspired by compact social-deduction card games. No assets required.</div>
   </section>
@@ -104,7 +104,7 @@
         <div class="rules">
           <details open><summary>How to win</summary><p>On your turn, draw one and play one. Be the final surviving player, or hold the highest-value card when the deck empties. First to the required number of seals wins.</p></details>
           <details><summary>Roles</summary><div id="roleRules"></div></details>
-          <details><summary>Networking</summary><p>The host owns the authoritative deck and hidden hands. Guests receive only public state plus their own hand.</p></details>
+          <details><summary>Networking</summary><p>Firebase relays room traffic across networks. The host remains authoritative for rules and hidden cards; each guest can read only their own private view.</p></details>
         </div>
       </aside>
     </div>
@@ -113,7 +113,9 @@
 
 <div id="modal" class="modal"><div class="modalBox"><h3 id="modalTitle"></h3><p id="modalText"></p><div id="modalChoices" class="choiceGrid"></div><div class="modalActions"><button id="modalCancel">Cancel</button></div></div></div>
 <div id="toast" class="toast"></div>
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 <script>
 (() => {
 'use strict';
@@ -121,8 +123,16 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 const uid = () => Math.random().toString(36).slice(2,9);
 const shuffle = a => { a=[...a]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
-const ROOM_PREFIX='whisper-court-';
-const VERSION=1;
+const VERSION=2;
+// Paste the Web app configuration from Firebase Console → Project settings.
+// The apiKey is a public project identifier; database security is enforced by firebase-rules.json.
+const FIREBASE_CONFIG = {
+  apiKey: "PASTE_FIREBASE_API_KEY",
+  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
+  databaseURL: "https://PASTE_PROJECT_ID-default-rtdb.firebaseio.com",
+  projectId: "PASTE_PROJECT_ID",
+  appId: "PASTE_FIREBASE_APP_ID"
+};
 const ROLES = [
  {v:0,name:'Moth',count:2,cls:'green',flavor:'It remembers who survived.',text:'No immediate effect. If you are the only surviving player who played a Moth this round, gain 1 bonus seal.'},
  {v:1,name:'Watcher',count:6,cls:'blue',flavor:'One guess can ruin a life.',text:'Choose another player and name a role other than Watcher. If correct, they are eliminated.'},
@@ -139,21 +149,40 @@ const byV = v => ROLES.find(r=>r.v===v);
 const fullDeck = () => ROLES.flatMap(r=>Array.from({length:r.count},()=>({id:uid(),v:r.v})));
 const winTarget = n => n<=2?6:n===3?5:n===4?4:3;
 
-let peer=null, hostConn=null, conns=new Map(), isHost=false, myPeerId='', myPlayerId=uid(), room='', pendingAction=null;
+let auth=null, db=null, fbUser=null, roomRef=null, isHost=false, myPlayerId='', room='', pendingAction=null, commandListener=null, viewListener=null, mailListener=null;
 let state={version:VERSION,phase:'lobby',round:0,players:[],turnIndex:0,deck:[],setAside:null,discards:[],logs:[],winner:null};
-let view={players:[],phase:'lobby',round:0,turnIndex:0,deckCount:0,discards:[],logs:[],winner:null,myHand:[],myId:myPlayerId,target:0};
+let view={players:[],phase:'lobby',round:0,turnIndex:0,deckCount:0,discards:[],logs:[],winner:null,myHand:[],myId:'',target:0};
 
 function setNet(ok,text){$('#netDot').classList.toggle('on',ok);$('#netText').textContent=text;}
 function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1900)}
 function showGame(){ $('#homeScreen').classList.remove('active'); $('#gameScreen').classList.add('active'); }
 function normRoom(s){return s.trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8)}
 function newRoomCode(){return Array.from({length:5},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('')}
+function firebaseConfigured(){return !Object.values(FIREBASE_CONFIG).some(v=>String(v).includes('PASTE_'))}
+async function initFirebase(){
+ if(fbUser)return fbUser;
+ if(!firebaseConfigured())throw new Error('Firebase is not configured. Paste your Firebase Web app values into FIREBASE_CONFIG first.');
+ if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
+ auth=firebase.auth();db=firebase.database();
+ await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+ if(!auth.currentUser)await auth.signInAnonymously();
+ fbUser=auth.currentUser;myPlayerId=fbUser.uid;view.myId=myPlayerId;return fbUser;
+}
+function fbError(e){console.error(e);setNet(false,'backend error');toast(e?.message||'Network error.');}
+function cleanupListeners(){
+ if(commandListener&&roomRef)roomRef.child('commands').off('child_added',commandListener);
+ if(viewListener&&roomRef)roomRef.child('views/'+myPlayerId).off('value',viewListener);
+ if(mailListener&&roomRef)roomRef.child('mail/'+myPlayerId).off('child_added',mailListener);
+ commandListener=viewListener=mailListener=null;
+}
+function attachPresence(){const p=roomRef.child('presence/'+myPlayerId);p.onDisconnect().set({online:false,lastSeen:firebase.database.ServerValue.TIMESTAMP});return p.set({online:true,lastSeen:firebase.database.ServerValue.TIMESTAMP});}
 function cardHTML(c,playable=false){ const r=byV(c.v); return `<div class="card ${r.cls} ${playable?'playable':''}" data-card="${c.id}"><span class="copies">${r.count} in deck</span><div class="value">${r.v}</div><div class="role">${r.name}</div><div class="flavor">${r.flavor}</div><div class="ability">${r.text}</div></div>` }
 function log(text){state.logs.push({id:uid(),text}); if(state.logs.length>80)state.logs.shift();}
 function activePlayers(){return state.players.filter(p=>!p.out)}
 function currentPlayer(){return state.players[state.turnIndex]}
 function nextTurn(){
  if(state.phase!=='playing')return;
+ const previous=currentPlayer();if(previous)previous.pending=null;
  let guard=0;
  do{state.turnIndex=(state.turnIndex+1)%state.players.length;guard++;}while(state.players[state.turnIndex].out&&guard<20);
  const p=currentPlayer(); p.protected=false;
@@ -163,7 +192,7 @@ function nextTurn(){
 }
 function beginRound(){
  state.round++; state.phase='playing'; state.winner=null; state.discards=[]; state.deck=shuffle(fullDeck()); state.setAside=state.deck.pop();
- state.players.forEach(p=>{p.out=false;p.protected=false;p.roundMoth=false;p.hand=[state.deck.pop()]});
+ state.players.forEach(p=>{p.out=false;p.protected=false;p.roundMoth=false;p.pending=null;p.hand=[state.deck.pop()]});
  if(state.players.length===2){for(let i=0;i<3;i++){const c=state.deck.pop();state.discards.push({card:c,playerId:null,public:true,setup:true});}}
  state.turnIndex=(state.round-1)%state.players.length;
  currentPlayer().hand.push(state.deck.pop());
@@ -194,42 +223,81 @@ function playCard(pid,cardId){
  if(card.v===4){p.protected=true;nextTurn();return}
  if(card.v===6){
    const drawn=[];for(let i=0;i<2&&state.deck.length;i++)drawn.push(state.deck.pop());p.hand.push(...drawn);
-   if(p.hand.length<=1){nextTurn();return} sendTo(pid,{type:'request',action:'archive',cards:p.hand}); broadcast();return;
+   if(p.hand.length<=1){nextTurn();return} p.pending={action:'archive'};sendTo(pid,{type:'request',action:'archive',cards:p.hand}); broadcast();return;
  }
  const targets=state.players.filter(t=>canTarget(t,card.v===5,p.id));
  if(card.v===5 && !targets.some(t=>t.id===p.id))targets.push(p);
  if(!targets.length){log('No valid target.');nextTurn();return}
- sendTo(pid,{type:'request',action:'target',card,targets:targets.map(t=>({id:t.id,name:t.name}))}); broadcast();
+ p.pending={action:'target',card,targetIds:targets.map(t=>t.id)};sendTo(pid,{type:'request',action:'target',card,targets:targets.map(t=>({id:t.id,name:t.name}))}); broadcast();
 }
-function resolveTarget(pid,card,targetId){
- if(currentPlayer()?.id!==pid)return; const actor=state.players.find(p=>p.id===pid), target=state.players.find(p=>p.id===targetId); if(!actor||!target)return;
+function resolveTarget(pid,targetId){
+ if(currentPlayer()?.id!==pid)return; const actor=state.players.find(p=>p.id===pid), target=state.players.find(p=>p.id===targetId);if(!actor||!target||actor.pending?.action!=='target'||!actor.pending.targetIds.includes(targetId))return;const card=actor.pending.card;
  if(!canTarget(target,card.v===5,pid)){sendTo(pid,{type:'error',text:'That target is not available.'});return}
- if(card.v===1){sendTo(pid,{type:'request',action:'guess',card,target:{id:target.id,name:target.name}});return}
+ if(card.v===1){actor.pending={action:'guess',targetId:target.id};sendTo(pid,{type:'request',action:'guess',target:{id:target.id,name:target.name}});return}
  if(card.v===2){sendTo(pid,{type:'privateReveal',text:`${target.name} holds ${target.hand[0]?byV(target.hand[0].v).name:'nothing'}.`});nextTurn();return}
  if(card.v===3){ const av=actor.hand[0]?.v??-1,tv=target.hand[0]?.v??-1; if(av>tv)eliminate(target,'lost the duel');else if(tv>av)eliminate(actor,'lost the duel');else log('The duel is a tie.'); if(!checkRoundEnd())nextTurn();return}
  if(card.v===5){ if(target.hand[0]){const old=target.hand.pop();state.discards.push({card:old,playerId:target.id,public:true});if(old.v===0)target.roundMoth=true;if(old.v===9){eliminate(target,'discarded the Sovereign'); if(!checkRoundEnd())nextTurn();return}} const repl=state.deck.length?state.deck.pop():state.setAside; if(repl)target.hand=[repl]; log(`<b>${esc(target.name)}</b> replaces their hand.`);nextTurn();return}
  if(card.v===7){const a=actor.hand,b=target.hand;actor.hand=b;target.hand=a;log(`<b>${esc(actor.name)}</b> trades hands with <b>${esc(target.name)}</b>.`);nextTurn();return}
 }
-function resolveGuess(pid,targetId,value){ if(currentPlayer()?.id!==pid)return; const target=state.players.find(p=>p.id===targetId); if(!target)return; const name=byV(value).name;log(`<b>${esc(state.players.find(p=>p.id===pid).name)}</b> names <b>${name}</b> against <b>${esc(target.name)}</b>.`); if(target.hand[0]?.v===value)eliminate(target,'the Watcher guessed correctly'); if(!checkRoundEnd())nextTurn(); }
-function resolveArchive(pid,keepId){const p=state.players.find(x=>x.id===pid);if(currentPlayer()?.id!==pid||!p||p.hand.length<2)return; const kept=p.hand.find(c=>c.id===keepId);if(!kept)return;const rest=p.hand.filter(c=>c.id!==keepId);p.hand=[kept];state.deck.unshift(...rest);log(`<b>${esc(p.name)}</b> consults the archive.`);nextTurn();}
-function publicStateFor(pid){ return {version:VERSION,phase:state.phase,round:state.round,turnIndex:state.turnIndex,deckCount:state.deck.length,discards:state.discards,logs:state.logs,winner:state.winner,target:winTarget(state.players.length),players:state.players.map(p=>({id:p.id,name:p.name,seals:p.seals,out:p.out,protected:p.protected,handCount:p.hand.length})),myId:pid,myHand:state.players.find(p=>p.id===pid)?.hand||[]}; }
-function broadcast(){ if(!isHost)return; view=publicStateFor(myPlayerId);render(); for(const [pid,c] of conns) if(c.open)c.send({type:'state',state:publicStateFor(pid)}); }
-function sendTo(pid,msg){if(pid===myPlayerId){handleMessage(msg);return}const c=conns.get(pid);if(c?.open)c.send(msg)}
-function hostReceive(pid,msg){if(!msg||typeof msg!=='object')return;if(msg.type==='play')playCard(pid,msg.cardId);else if(msg.type==='target')resolveTarget(pid,msg.card,msg.targetId);else if(msg.type==='guess')resolveGuess(pid,msg.targetId,msg.value);else if(msg.type==='archive')resolveArchive(pid,msg.keepId)}
+function resolveGuess(pid,targetId,value){const actor=state.players.find(p=>p.id===pid);if(currentPlayer()?.id!==pid||actor?.pending?.action!=='guess'||actor.pending.targetId!==targetId||value===1||!byV(value))return;const target=state.players.find(p=>p.id===targetId);if(!target)return;const name=byV(value).name;log(`<b>${esc(actor.name)}</b> names <b>${name}</b> against <b>${esc(target.name)}</b>.`);if(target.hand[0]?.v===value)eliminate(target,'the Watcher guessed correctly');if(!checkRoundEnd())nextTurn();}
+function resolveArchive(pid,keepId){const p=state.players.find(x=>x.id===pid);if(currentPlayer()?.id!==pid||!p||p.pending?.action!=='archive'||p.hand.length<2)return;const kept=p.hand.find(c=>c.id===keepId);if(!kept)return;const rest=p.hand.filter(c=>c.id!==keepId);p.hand=[kept];state.deck.unshift(...rest);log(`<b>${esc(p.name)}</b> consults the archive.`);nextTurn();}
+function requestFor(p){if(!p?.pending)return null;const q=p.pending;if(q.action==='archive')return{action:'archive',cards:p.hand};if(q.action==='guess'){const t=state.players.find(x=>x.id===q.targetId);return t?{action:'guess',target:{id:t.id,name:t.name}}:null}if(q.action==='target')return{action:'target',card:q.card,targets:q.targetIds.map(id=>state.players.find(x=>x.id===id)).filter(Boolean).map(t=>({id:t.id,name:t.name}))};return null}
+function publicStateFor(pid){const mine=state.players.find(p=>p.id===pid);return{version:VERSION,phase:state.phase,round:state.round,turnIndex:state.turnIndex,deckCount:state.deck.length,discards:state.discards,logs:state.logs,winner:state.winner,target:winTarget(state.players.length),players:state.players.map(p=>({id:p.id,name:p.name,seals:p.seals,out:p.out,protected:p.protected,handCount:p.hand.length})),myId:pid,myHand:mine?.hand||[],myRequest:requestFor(mine)};}
+async function broadcast(){if(!isHost||!roomRef)return;view=publicStateFor(myPlayerId);render();const updates={hostState:state};for(const p of state.players)updates['views/'+p.id]=publicStateFor(p.id);try{await roomRef.update(updates)}catch(e){fbError(e)}}
+function sendTo(pid,msg){if(pid===myPlayerId){handleMessage(msg);return}if(isHost&&roomRef)roomRef.child('mail/'+pid).push({...msg,createdAt:firebase.database.ServerValue.TIMESTAMP}).catch(fbError)}
+function hostReceive(pid,msg){if(!msg||typeof msg!=='object')return;if(msg.type==='play')playCard(pid,msg.cardId);else if(msg.type==='target')resolveTarget(pid,msg.targetId);else if(msg.type==='guess')resolveGuess(pid,msg.targetId,Number(msg.value));else if(msg.type==='archive')resolveArchive(pid,msg.keepId)}
 function handleMessage(msg){ if(msg.type==='state'){view=msg.state;render()} else if(msg.type==='request'){pendingAction=msg;renderAction(msg)} else if(msg.type==='privateReveal'){openInfo('Secret learned',msg.text)} else if(msg.type==='error'){toast(msg.text)} }
-function hostRoom(){
- const name=$('#nameInput').value.trim()||'Host'; room=newRoomCode(); isHost=true; myPlayerId=uid(); peer=new Peer(ROOM_PREFIX+room); setNet(false,'connecting…');
- peer.on('open',id=>{myPeerId=id;setNet(true,'host online');state.players=[{id:myPlayerId,peerId:id,name,seals:0,out:false,protected:false,roundMoth:false,hand:[]}];view=publicStateFor(myPlayerId);showGame();render()});
- peer.on('connection',conn=>{conn.on('data',msg=>{if(msg.type==='hello'){if(state.phase!=='lobby'){conn.send({type:'error',text:'Match already started.'});conn.close();return}if(state.players.length>=6){conn.send({type:'error',text:'Room is full.'});conn.close();return}const pid=uid();conn._pid=pid;conns.set(pid,conn);state.players.push({id:pid,peerId:conn.peer,name:String(msg.name||'Guest').slice(0,18),seals:0,out:false,protected:false,roundMoth:false,hand:[]});conn.send({type:'welcome',playerId:pid,room});log(`<b>${esc(msg.name||'Guest')}</b> joined the room.`);broadcast()}else if(conn._pid)hostReceive(conn._pid,msg)});conn.on('close',()=>{const pid=conn._pid;if(!pid)return;conns.delete(pid);const p=state.players.find(x=>x.id===pid);if(p){log(`<b>${esc(p.name)}</b> disconnected.`); if(state.phase==='lobby')state.players=state.players.filter(x=>x.id!==pid);else if(!p.out){eliminate(p,'disconnected');checkRoundEnd()} broadcast();}})});
- peer.on('error',e=>{setNet(false,'network error');toast(e.type==='unavailable-id'?'Room code collision. Reload and try again.':'Network error: '+e.type)});
+function attachHostCommands(){
+ commandListener=async snap=>{const msg=snap.val();try{
+   if(!msg?.senderUid)return;
+   if(msg.type==='hello'){
+     const existing=state.players.find(p=>p.id===msg.senderUid);
+     if(existing){existing.name=String(msg.name||existing.name).slice(0,18);sendTo(msg.senderUid,{type:'welcome',room,reconnected:true});await broadcast();return}
+     if(state.phase!=='lobby'){sendTo(msg.senderUid,{type:'error',text:'Match already started.'});return}
+     if(state.players.length>=6){sendTo(msg.senderUid,{type:'error',text:'Room is full.'});return}
+     const name=String(msg.name||'Guest').slice(0,18);state.players.push({id:msg.senderUid,name,seals:0,out:false,protected:false,roundMoth:false,pending:null,hand:[]});
+     log(`<b>${esc(name)}</b> joined the room.`);sendTo(msg.senderUid,{type:'welcome',room});await broadcast();
+   }else if(state.players.some(p=>p.id===msg.senderUid))hostReceive(msg.senderUid,msg);
+ }finally{snap.ref.remove().catch(fbError)}};
+ roomRef.child('commands').on('child_added',commandListener,fbError);
 }
-function joinRoom(){
- const name=$('#nameInput').value.trim()||'Guest'; room=normRoom($('#roomInput').value);if(!room)return toast('Enter a room code.');isHost=false;peer=new Peer();setNet(false,'connecting…');
- peer.on('open',id=>{myPeerId=id;hostConn=peer.connect(ROOM_PREFIX+room,{reliable:true});hostConn.on('open',()=>{setNet(true,'connected');hostConn.send({type:'hello',name});showGame();$('#roomCode').textContent=room});hostConn.on('data',msg=>{if(msg.type==='welcome'){myPlayerId=msg.playerId;view.myId=myPlayerId;toast('Joined '+msg.room)}else handleMessage(msg)});hostConn.on('close',()=>{setNet(false,'host disconnected');toast('Host disconnected.')});});peer.on('error',e=>{setNet(false,'network error');toast('Could not connect: '+e.type)});
+function attachGuestStreams(){
+ viewListener=snap=>{if(snap.exists()){view=snap.val();view.myId=myPlayerId;setNet(true,'connected');showGame();render()}};
+ mailListener=snap=>{const msg=snap.val();handleMessage(msg);snap.ref.remove().catch(fbError)};
+ roomRef.child('views/'+myPlayerId).on('value',viewListener,fbError);
+ roomRef.child('mail/'+myPlayerId).on('child_added',mailListener,fbError);
 }
-function send(msg){if(isHost)hostReceive(myPlayerId,msg);else if(hostConn?.open)hostConn.send(msg)}
+async function hostRoom(){
+ const name=($('#nameInput').value.trim()||'Host').slice(0,18);setNet(false,'connecting…');
+ try{await initFirebase();isHost=true;cleanupListeners();
+   let created=false;
+   for(let tries=0;tries<8&&!created;tries++){
+     room=newRoomCode();roomRef=db.ref('rooms/'+room);
+     const result=await roomRef.child('meta').transaction(current=>current||{hostUid:myPlayerId,hostName:name,version:VERSION,createdAt:firebase.database.ServerValue.TIMESTAMP});
+     created=result.committed&&result.snapshot.val()?.hostUid===myPlayerId;
+   }
+   if(!created)throw new Error('Could not reserve a room code. Please try again.');
+   state={version:VERSION,phase:'lobby',round:0,players:[{id:myPlayerId,name,seals:0,out:false,protected:false,roundMoth:false,pending:null,hand:[]}],turnIndex:0,deck:[],setAside:null,discards:[],logs:[],winner:null};
+   await attachPresence();attachHostCommands();localStorage.setItem('whisperCourtHostRoom',room);setNet(true,'host online');showGame();await broadcast();
+ }catch(e){fbError(e)}
+}
+async function resumeHost(name){
+ isHost=true;const snap=await roomRef.child('hostState').once('value');if(!snap.exists())throw new Error('This host room has no recoverable game state.');state=snap.val();
+ const me=state.players.find(p=>p.id===myPlayerId);if(me&&name)me.name=name;await attachPresence();attachHostCommands();setNet(true,'host resumed');showGame();await broadcast();toast('Host session restored.');
+}
+async function joinRoom(){
+ const name=($('#nameInput').value.trim()||'Guest').slice(0,18);room=normRoom($('#roomInput').value);if(!room)return toast('Enter a room code.');setNet(false,'connecting…');
+ try{await initFirebase();cleanupListeners();roomRef=db.ref('rooms/'+room);const metaSnap=await roomRef.child('meta').once('value');if(!metaSnap.exists())throw new Error('Room not found. Check the code and try again.');
+   if(metaSnap.val().version!==VERSION)throw new Error('This room uses a different game version.');
+   if(metaSnap.val().hostUid===myPlayerId){await resumeHost(name);return}
+   isHost=false;await attachPresence();attachGuestStreams();showGame();$('#roomCode').textContent=room;
+   await roomRef.child('commands').push({type:'hello',senderUid:myPlayerId,name,createdAt:firebase.database.ServerValue.TIMESTAMP});
+ }catch(e){fbError(e)}
+}
+function send(msg){if(isHost)hostReceive(myPlayerId,msg);else if(roomRef)roomRef.child('commands').push({...msg,senderUid:myPlayerId,createdAt:firebase.database.ServerValue.TIMESTAMP}).catch(fbError)}
 function render(){
- $('#roomCode').textContent=room||'—';$('#roundBadge').textContent=view.phase==='lobby'?'Lobby':`Round ${view.round}`;$('#startBtn').style.display=isHost?'block':'none';$('#startBtn').disabled=view.phase!=='lobby'||view.players.length<2;$('#startBtn').textContent=view.players.length<2?'Need 2 players':'Start game';
+ $('#roomCode').textContent=room||'—';$('#roundBadge').textContent=view.phase==='lobby'?'Lobby':`Round ${view.round}`;
+ if(view.myRequest){pendingAction=view.myRequest;renderAction(view.myRequest)}else if(pendingAction){pendingAction=null;renderAction(null)}
  const cp=view.players[view.turnIndex];$('#players').innerHTML=view.players.map(p=>`<div class="player ${cp?.id===p.id?'turn':''} ${p.out?'out':''} ${p.protected?'protected':''}"><div class="pname">${esc(p.name)}${p.id===view.myId?' · you':''}</div><div class="pmeta">${p.out?'Eliminated':p.handCount+' card'+(p.handCount===1?'':'s')}</div><div class="tokens">${'◆'.repeat(p.seals)}${'◇'.repeat(Math.max(0,(view.target||0)-p.seals))}</div></div>`).join('');
  $('#deckCount').textContent=view.deckCount; const me=view.players.find(p=>p.id===view.myId); const myTurn=view.phase==='playing'&&cp?.id===view.myId&&!me?.out; $('#handHint').textContent=myTurn?'Choose a card to play':' ';
  $('#hand').innerHTML=(view.myHand||[]).map(c=>cardHTML(c,myTurn)).join('')||`<div class="small">${me?.out?'You are out of this round.':'No cards yet.'}</div>`;
@@ -240,10 +308,10 @@ function render(){
  else if(view.phase==='playing'){ $('#tableHeadline').textContent=cp?.id===view.myId?'Your move.':`${cp?.name||'Someone'} is thinking…`;$('#tableSub').textContent=`${view.deckCount} cards remain · first to ${view.target} seals wins`; }
  else if(view.phase==='roundOver'){ $('#tableHeadline').textContent=`${view.winner?.name||'Someone'} wins the round.`;$('#tableSub').textContent=isHost?'Start the next round when ready.':'Waiting for the host.'; }
  else if(view.phase==='gameOver'){ $('#tableHeadline').textContent=`${view.winner?.name||'Someone'} wins the match.`;$('#tableSub').textContent='The court remembers everything.'; }
- if(isHost && (view.phase==='roundOver'||view.phase==='gameOver')){$('#hostControls').innerHTML=`<button id="nextBtn" class="primary" style="width:100%">${view.phase==='gameOver'?'New match':'Next round'}</button>`;$('#nextBtn').onclick=()=>view.phase==='gameOver'?startGame():beginRound()} else if(isHost){$('#hostControls').innerHTML='<button id="startBtn" class="primary" style="width:100%">Start game</button>';$('#startBtn').disabled=view.phase!=='lobby'||view.players.length<2;$('#startBtn').onclick=startGame}
+ if(isHost && (view.phase==='roundOver'||view.phase==='gameOver')){$('#hostControls').innerHTML=`<button id="nextBtn" class="primary" style="width:100%">${view.phase==='gameOver'?'New match':'Next round'}</button>`;$('#nextBtn').onclick=()=>view.phase==='gameOver'?startGame():beginRound()} else if(isHost){$('#hostControls').innerHTML='<button id="startBtn" class="primary" style="width:100%">Start game</button>';$('#startBtn').disabled=view.phase!=='lobby'||view.players.length<2;$('#startBtn').onclick=startGame}else{$('#hostControls').innerHTML='<div class="small">Only the room host can start rounds.</div>'}
  }
 function renderAction(req){
- const box=$('#actionArea');if(!req){box.innerHTML='';return} if(req.action==='target'){const r=byV(req.card.v);box.innerHTML=`<div class="actionbar"><strong>${r.name}: choose a target</strong><div class="choiceGrid">${req.targets.map(t=>`<button data-target="${t.id}">${esc(t.name)}</button>`).join('')}</div></div>`;box.querySelectorAll('[data-target]').forEach(b=>b.onclick=()=>{send({type:'target',card:req.card,targetId:b.dataset.target});box.innerHTML='';pendingAction=null})}
+ const box=$('#actionArea');if(!req){box.innerHTML='';return} if(req.action==='target'){const r=byV(req.card.v);box.innerHTML=`<div class="actionbar"><strong>${r.name}: choose a target</strong><div class="choiceGrid">${req.targets.map(t=>`<button data-target="${t.id}">${esc(t.name)}</button>`).join('')}</div></div>`;box.querySelectorAll('[data-target]').forEach(b=>b.onclick=()=>{send({type:'target',targetId:b.dataset.target});box.innerHTML='';pendingAction=null})}
  else if(req.action==='guess'){box.innerHTML=`<div class="actionbar"><strong>Watcher: name ${esc(req.target.name)}’s card</strong><div class="choiceGrid">${ROLES.filter(r=>r.v!==1).map(r=>`<button data-guess="${r.v}">${r.v} · ${r.name}</button>`).join('')}</div></div>`;box.querySelectorAll('[data-guess]').forEach(b=>b.onclick=()=>{send({type:'guess',targetId:req.target.id,value:Number(b.dataset.guess)});box.innerHTML='';pendingAction=null})}
  else if(req.action==='archive'){box.innerHTML=`<div class="actionbar"><strong>Archivist: keep one card</strong><div class="cards" style="margin-top:10px">${req.cards.map(c=>cardHTML(c,true)).join('')}</div></div>`;box.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>{send({type:'archive',keepId:b.dataset.card});box.innerHTML='';pendingAction=null})}
 }
@@ -253,7 +321,7 @@ $('#hostBtn').onclick=hostRoom;$('#joinRevealBtn').onclick=()=>{$('#joinFields')
 $('#copyBtn').onclick=async()=>{const link=location.origin+location.pathname+'?room='+encodeURIComponent(room);try{await navigator.clipboard.writeText(link);toast('Invite link copied.')}catch{toast('Room code: '+room)}};
 $('#roleRules').innerHTML=[...ROLES].reverse().map(r=>`<div class="rulecard"><b>${r.v}</b><div><strong>${r.name}</strong> — ${r.text}</div></div>`).join('');
 const params=new URLSearchParams(location.search);if(params.get('room')){$('#joinFields').classList.remove('hidden');$('#roomInput').value=normRoom(params.get('room'))}
-window.addEventListener('beforeunload',()=>{try{peer?.destroy()}catch{}});
+if(!firebaseConfigured())setNet(false,'setup required');
 render();
 })();
 </script>

@@ -1,0 +1,46 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$room": {
+        "meta": {
+          ".read": "auth != null",
+          ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid)",
+          ".validate": "newData.hasChildren(['hostUid', 'version'])"
+        },
+        "hostState": {
+          ".read": "auth != null && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid",
+          ".write": "auth != null && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid"
+        },
+        "views": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid"
+          }
+        },
+        "commands": {
+          ".read": "auth != null && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid",
+          "$command": {
+            ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('senderUid').val() === auth.uid) || (data.exists() && !newData.exists() && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid))",
+            ".validate": "!newData.exists() || newData.hasChildren(['type', 'senderUid'])"
+          }
+        },
+        "mail": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            "$message": {
+              ".write": "auth != null && ((!data.exists() && newData.exists() && root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid) || (data.exists() && !newData.exists() && auth.uid === $uid))"
+            }
+          }
+        },
+        "presence": {
+          "$uid": {
+            ".read": "auth != null && (auth.uid === $uid || root.child('rooms').child($room).child('meta').child('hostUid').val() === auth.uid)",
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        }
+      }
+    }
+  }
+}
